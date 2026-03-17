@@ -6,6 +6,7 @@ This bot responds to user messages using Google's Gemini AI model
 
 import os
 import logging
+import asyncio
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 import google.generativeai as genai
@@ -23,7 +24,6 @@ GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 
 # Configure Gemini API
 genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel('gemini-pro')
 
 # Store conversation history for context
 user_conversations = {}
@@ -83,24 +83,30 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if user_id not in user_conversations:
         user_conversations[user_id] = []
     
-    # Add user message to history
-    user_conversations[user_id].append({
-        "role": "user",
-        "parts": [user_message]
-    })
-    
     # Show typing indicator
     await update.message.chat.send_action("typing")
     
     try:
-        # Build conversation history for context
-        chat = model.start_chat(history=user_conversations[user_id][:-1])
+        # Create model instance
+        model = genai.GenerativeModel('gemini-pro')
+        
+        # Prepare conversation history for context
+        history = []
+        for msg in user_conversations[user_id]:
+            history.append(msg)
+        
+        # Start chat with history
+        chat = model.start_chat(history=history)
         
         # Get response from Gemini
         response = chat.send_message(user_message)
         ai_response = response.text
         
-        # Add AI response to history
+        # Store conversation in history
+        user_conversations[user_id].append({
+            "role": "user",
+            "parts": [user_message]
+        })
         user_conversations[user_id].append({
             "role": "model",
             "parts": [ai_response]
@@ -117,11 +123,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             
     except Exception as e:
         logger.error(f"Error processing message: {e}")
-        error_message = f"❌ အဆင်မပြေပါ။ အမှားအယွင်း ရှိပါသည်:\n{str(e)}"
+        error_message = f"❌ အဆင်မပြေပါ။ အမှားအယွင်း ရှိပါသည်:\n{str(e)[:200]}"
         await update.message.reply_text(error_message)
-        
-        # Remove the failed message from history
-        user_conversations[user_id].pop()
 
 def main() -> None:
     """Start the bot."""
