@@ -1,18 +1,17 @@
 #!/usr/bin/env python3
 """
-Telegram AI Assistant Bot using Google Gemini API with Webhook
-This bot responds to user messages using Google's Gemini AI model
+Telegram AI Assistant Bot using OpenAI API with Webhook
+This bot responds to user messages using OpenAI's GPT models
 """
 
 import os
 import logging
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
-import google.generativeai as genai
+from openai import OpenAI
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 import uvicorn
-import asyncio
 
 # Configure logging
 logging.basicConfig(
@@ -23,11 +22,11 @@ logger = logging.getLogger(__name__)
 
 # Get API keys from environment variables
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
-GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 PORT = int(os.getenv('PORT', 8000))
 
-# Configure Gemini API
-genai.configure(api_key=GEMINI_API_KEY)
+# Initialize OpenAI client
+client = OpenAI(api_key=OPENAI_API_KEY)
 
 # Store conversation history for context
 user_conversations = {}
@@ -46,7 +45,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     welcome_message = """
 🤖 မြန်မာ AI Assistant Bot သို့ ကြိုးဆိုကပါသည်!
 
-ကျနော် Google Gemini AI ကို အသုံးပြုပြီး သင့်ရဲ့ မေးခွန်းများကို ဖြေကြားပေးပါ့မယ်။
+ကျနော် OpenAI ၏ GPT AI ကို အသုံးပြုပြီး သင့်ရဲ့ မေးခွန်းများကို ဖြေကြားပေးပါ့မယ်။
 
 အသုံးပြုနိုင်သော Command များ:
 /start - Bot ကို စတင်ခြင်း
@@ -62,7 +61,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     help_text = """
 📚 အကူအညီ
 
-ဤ Bot သည် Google Gemini AI ကို အသုံးပြုပြီး သင့်ရဲ့ မေးခွန်းများကို ဖြေကြားပေးပါသည်။
+ဤ Bot သည် OpenAI ၏ GPT AI ကို အသုံးပြုပြီး သင့်ရဲ့ မေးခွန်းများကို ဖြေကြားပေးပါသည်။
 
 အသုံးပြုနိုင်သော Command များ:
 • /start - Bot ကို စတင်ခြင်း
@@ -85,7 +84,7 @@ async def clear_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await update.message.reply_text("✅ စကားပြောင်းလဲမှု မှတ်တမ်းကို ရှင်းလင်းပြီးပါပြီ။ နောက်ထပ် မေးခွန်းများ မေးမြန်းနိုင်ပါတယ်။")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle incoming messages and respond with Gemini AI."""
+    """Handle incoming messages and respond with OpenAI API."""
     user_id = update.effective_user.id
     user_message = update.message.text
     
@@ -97,29 +96,26 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await update.message.chat.send_action("typing")
     
     try:
-        # Create model instance
-        model = genai.GenerativeModel('gemini-pro')
-        
-        # Prepare conversation history for context
-        history = []
-        for msg in user_conversations[user_id]:
-            history.append(msg)
-        
-        # Start chat with history
-        chat = model.start_chat(history=history)
-        
-        # Get response from Gemini
-        response = chat.send_message(user_message)
-        ai_response = response.text
-        
-        # Store conversation in history
+        # Add user message to history
         user_conversations[user_id].append({
             "role": "user",
-            "parts": [user_message]
+            "content": user_message
         })
+        
+        # Get response from OpenAI
+        response = client.chat.completions.create(
+            model="gpt-4.1-mini",
+            messages=user_conversations[user_id],
+            max_tokens=2048,
+            temperature=0.7
+        )
+        
+        ai_response = response.choices[0].message.content
+        
+        # Add AI response to history
         user_conversations[user_id].append({
-            "role": "model",
-            "parts": [ai_response]
+            "role": "assistant",
+            "content": ai_response
         })
         
         # Send response back to user
@@ -135,6 +131,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         logger.error(f"Error processing message: {e}")
         error_message = f"❌ အဆင်မပြေပါ။ အမှားအယွင်း ရှိပါသည်:\n{str(e)[:200]}"
         await update.message.reply_text(error_message)
+        
+        # Remove the failed message from history
+        if user_conversations[user_id]:
+            user_conversations[user_id].pop()
 
 @app.post(f"/webhook/{TELEGRAM_BOT_TOKEN}")
 async def webhook(request: Request):
@@ -167,8 +167,10 @@ async def startup():
     """Initialize the application on startup."""
     global application
     
-    if not TELEGRAM_BOT_TOKEN or not GEMINI_API_KEY:
+    if not TELEGRAM_BOT_TOKEN or not OPENAI_API_KEY:
         logger.error("Missing required environment variables!")
+        logger.error(f"TELEGRAM_BOT_TOKEN: {bool(TELEGRAM_BOT_TOKEN)}")
+        logger.error(f"OPENAI_API_KEY: {bool(OPENAI_API_KEY)}")
         return
     
     # Create the Application
