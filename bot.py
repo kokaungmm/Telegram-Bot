@@ -7,6 +7,7 @@ This bot responds to user messages using Google's Gemini AI model
 import os
 import logging
 import sys
+import time
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
@@ -110,8 +111,26 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         # Start chat with history
         chat = model.start_chat(history=history)
         
-        # Get response from Gemini
-        response = chat.send_message(user_message)
+        # Get response from Gemini with retry logic
+        max_retries = 3
+        retry_count = 0
+        response = None
+        
+        while retry_count < max_retries:
+            try:
+                response = chat.send_message(user_message)
+                break
+            except Exception as e:
+                retry_count += 1
+                if retry_count < max_retries:
+                    logger.warning(f"Retry {retry_count}/{max_retries}: {str(e)}")
+                    time.sleep(2)  # Wait before retrying
+                else:
+                    raise
+        
+        if response is None:
+            raise Exception("Failed to get response from Gemini API after retries")
+        
         ai_response = response.text
         
         # Store conversation in history
@@ -132,9 +151,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 await update.message.reply_text(ai_response[i:i+4096])
         else:
             await update.message.reply_text(ai_response)
+        
+        logger.info(f"✅ Successfully responded to user {user_id}")
             
     except Exception as e:
-        logger.error(f"Error processing message: {e}")
+        logger.error(f"❌ Error processing message: {e}", exc_info=True)
         error_message = f"❌ အဆင်မပြေပါ။ အမှားအယွင်း ရှိပါသည်:\n{str(e)[:200]}"
         await update.message.reply_text(error_message)
 
@@ -148,9 +169,11 @@ def main() -> None:
         logger.error("❌ Missing GEMINI_API_KEY environment variable!")
         sys.exit(1)
     
+    logger.info("=" * 60)
     logger.info("✅ Starting Telegram AI Bot with Gemini API...")
     logger.info(f"Bot Token: {TELEGRAM_BOT_TOKEN[:20]}...")
     logger.info(f"Gemini API Key: {GEMINI_API_KEY[:20]}...")
+    logger.info("=" * 60)
     
     # Create the Application
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
@@ -163,6 +186,7 @@ def main() -> None:
 
     # Run the bot
     logger.info("✅ Bot is running with polling mode...")
+    logger.info("Waiting for messages...")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__':
