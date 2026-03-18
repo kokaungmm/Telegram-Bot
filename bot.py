@@ -1,17 +1,15 @@
 #!/usr/bin/env python3
 """
-Telegram AI Assistant Bot using OpenAI API with Webhook
+Telegram AI Assistant Bot using OpenAI API with Polling
 This bot responds to user messages using OpenAI's GPT models
 """
 
 import os
 import logging
+import asyncio
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from openai import OpenAI
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
-import uvicorn
 
 # Configure logging
 logging.basicConfig(
@@ -23,19 +21,12 @@ logger = logging.getLogger(__name__)
 # Get API keys from environment variables
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
-PORT = int(os.getenv('PORT', 8000))
 
 # Initialize OpenAI client
 client = OpenAI(api_key=OPENAI_API_KEY)
 
 # Store conversation history for context
 user_conversations = {}
-
-# Create FastAPI app
-app = FastAPI()
-
-# Create Telegram application
-application = None
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a message when the command /start is issued."""
@@ -136,42 +127,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         if user_conversations[user_id]:
             user_conversations[user_id].pop()
 
-@app.post(f"/webhook/{TELEGRAM_BOT_TOKEN}")
-async def webhook(request: Request):
-    """Handle incoming webhook updates from Telegram."""
-    try:
-        update_data = await request.json()
-        update = Update.de_json(update_data, application.bot)
-        await application.process_update(update)
-        return JSONResponse({"ok": True})
-    except Exception as e:
-        logger.error(f"Error processing webhook: {e}")
-        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
-
-@app.get("/health")
-async def health():
-    """Health check endpoint."""
-    return {"status": "ok"}
-
-async def setup_webhook():
-    """Setup webhook for Telegram."""
-    try:
-        webhook_url = f"https://telegram-bot-r41n.onrender.com/webhook/{TELEGRAM_BOT_TOKEN}"
-        await application.bot.set_webhook(url=webhook_url)
-        logger.info(f"Webhook set to: {webhook_url}")
-    except Exception as e:
-        logger.error(f"Error setting webhook: {e}")
-
-@app.on_event("startup")
-async def startup():
-    """Initialize the application on startup."""
-    global application
-    
+def main() -> None:
+    """Start the bot."""
     if not TELEGRAM_BOT_TOKEN or not OPENAI_API_KEY:
         logger.error("Missing required environment variables!")
         logger.error(f"TELEGRAM_BOT_TOKEN: {bool(TELEGRAM_BOT_TOKEN)}")
         logger.error(f"OPENAI_API_KEY: {bool(OPENAI_API_KEY)}")
         return
+    
+    logger.info("Starting Telegram AI Bot...")
+    logger.info(f"Bot Token: {TELEGRAM_BOT_TOKEN[:20]}...")
     
     # Create the Application
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
@@ -182,19 +147,9 @@ async def startup():
     application.add_handler(CommandHandler("clear", clear_command))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    # Initialize application
-    await application.initialize()
-    
-    # Setup webhook
-    await setup_webhook()
-    
-    logger.info("Bot is ready!")
+    # Run the bot
+    logger.info("Bot is running with polling mode...")
+    application.run_polling(allowed_updates=Update.ALL_TYPES)
 
-@app.on_event("shutdown")
-async def shutdown():
-    """Cleanup on shutdown."""
-    if application:
-        await application.stop()
-
-if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=PORT)
+if __name__ == '__main__':
+    main()
